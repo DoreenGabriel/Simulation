@@ -9,12 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Dies ist ein Test.
-
-Hier eine neue Zeile.
 
 # Neuer Abschnitt 
 
 Hieran arbeiten wird. Lass uns das mit dem Main mergen.
 
 So machen wir es.
+
+```{r}
+2+2
+```
+
