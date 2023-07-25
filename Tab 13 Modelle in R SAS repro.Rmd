@@ -1,0 +1,517 @@
+---
+title: "Tab 13 Modelle in R (SAS Ergebnisse reproduzieren)"
+output: word_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment="")
+```
+
+```{r, message=FALSE}
+library(nlme)
+library(lme4)
+library(glmmTMB)
+library(lmerTest)
+library(plyr)
+library(dplyr)
+library(emmeans)
+library(multcomp)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+library(MuMIn)
+```
+
+
+```{r, eval=F}
+d<- read.delim("Tab13_data.txt")
+str(d)
+d$treat=as.factor(d$trt)
+d$block=as.factor(d$block)
+levels(d$treat)<-c(c("ctrl", "trt"))
+table(d$trt, d$treat)
+d$block_plot=factor(paste(d$block, d$trt, sep="."))
+d1=d[d$sim==1&d$no==3,]
+d1.3=d[d$sim==3&d$no==3,]
+write.csv(d1, "Tab13_data_d1.csv", row.names=F)
+```
+
+```{r}
+d1=read.csv("Tab13_data_d1.csv", header=T)
+d1$treat=as.factor(d1$treat)
+d1$block=as.factor(d1$block)
+d1$block_plot=as.factor(d1$block_plot)
+```
+
+
+## The data
+```{r, fig.witdh=4.5, fig.height=2.5}
+ggplot(data=d1, aes(y=y, x=treat, col=factor(obs)))+
+  geom_point()+
+  facet_grid(~block)
+```
+
+## Ergebnisse aus SAS
+
+Version | num df  | den df | F | p | 
+----- | -- | - | - | - |   
+1 | 1 | 14| 16.24 | 0.0012 
+2 | 1 | 2 | 215.43 | 0.0046
+3 | 1 | 12 | 14.07 | 0.0028
+4 | 1 | 2 | 16.24 | 0.0564 
+
+### Version 1
+```{r}
+mod.lmer=lmer(y~treat+block+(1|block_plot), data=d1, REML=TRUE)
+anova(mod.lmer)# Satterthwaite's V1
+```
+p ist 0.0012
+
+
+### Version 3
+#### lm
+```{r}
+model.V3=lm(y~treat*block, data=d1)
+summary(model.V3)
+car::Anova(model.V3, type=2)
+```
+p ist 0.0028
+
+### Version 4/5
+#### lme
+```{r}
+mod.lme=lme(y~treat+block, random=~1|block_plot, data=d1, method="REML", control=list(msMaxIter=100, opt='optim'))
+summary(mod.lme)# random effect variance ist nicht 0, wie in lmer
+anova(mod.lme) # V4
+anova(mod.lme, type="marginal") # V4
+```
+
+diese Version entspricht meiner Version 5 (Ergebnisse gleich)
+
+#### lmer
+```{r}
+mod.lmer=lmer(y~treat+block+(1|block_plot), data=d1, REML=TRUE)
+summary(mod.lmer)
+anova(mod.lmer, ddf="Kenward-Roger")# V4
+```
+
+*Version 4 klappt nicht mit glmmTMB*  
+
+## Version 6
+
+comparison of full model with null model via likelihood ratio test  
+models are fitted with maximum likelihood
+
+#### lme
+```{r}
+mod.lme1=lme(y~treat+block, random=~1|block_plot, data=d1, method="ML", control=list(msMaxIter=100, opt='optim'))
+mod.lme2=lme(y~block, random=~1|block_plot, data=d1, method="ML", control=list(msMaxIter=100, opt='optim'))
+anova(mod.lme1, mod.lme2) # p = 0.0004600252
+```
+
+
+#### lmer
+```{r}
+mod.lmer1=lmer(y~treat+block+(1|block_plot), data=d1, REML=FALSE)
+mod.lmer2=lmer(y~block+(1|block_plot), data=d1, REML=FALSE)
+anova(mod.lmer1, mod.lmer2)# p = 0.0004597 
+```
+#### glmmTMB
+```{r}
+mod.TMB1=glmmTMB(y~treat+block+(1|block_plot), data=d1, REML=FALSE)
+mod.TMB2=glmmTMB(y~block+(1|block_plot), data=d1, REML=FALSE)
+anova(mod.TMB1, mod.TMB2)
+```
+
+alle Packages liefern gleiche Ergebnisse
+
+## Version 7 und 8
+
+delta AIC between full model und null model (ML)  
+Version 7 dAIC< 4  
+Version 8 dAIC< 2  
+
+alle Packages liefern gleiche Ergebnisse
+
+#### lme
+```{r}
+AIC(mod.lme1)
+AIC(mod.lme2)
+AIC(mod.lme1)-AIC(mod.lme2)
+AIC(mod.lme1)-AIC(mod.lme2)<=-4 # V7
+AIC(mod.lme1)-AIC(mod.lme2)<=-2 # V8
+```
+#### lmer
+```{r}
+AIC(mod.lmer1)
+AIC(mod.lmer2)
+AIC(mod.lmer1)-AIC(mod.lmer2)
+AIC(mod.lmer1)-AIC(mod.lmer2)<=-4 # V7
+AIC(mod.lmer1)-AIC(mod.lmer2)<=-2 # V8
+```
+#### glmmTMB
+```{r}
+AIC(mod.TMB1)
+AIC(mod.TMB2)
+AIC(mod.TMB1)-AIC(mod.TMB2)
+AIC(mod.TMB1)-AIC(mod.TMB2)<=-4 # V7
+AIC(mod.TMB1)-AIC(mod.TMB2)<=-2 # V8
+```
+
+## Version 7B und 8B
+
+basieren auf BIC-Vergleich
+
+```{r}
+BIC(mod.lme1)
+BIC(mod.lme2)
+BIC(mod.lme1)-BIC(mod.lme2)
+```
+## Version 7c und 8c
+
+basieren auf AICc-Vergleich
+
+```{r}
+AICc(mod.lme1)
+AICc(mod.lme2)
+AICc(mod.lme1)-AICc(mod.lme2)
+```
+## Version 9
+
+Mittelwerte für die Blöcke bilden und ANOVA rechnen 
+```{r}
+d1.mean=ddply(d1, .(block,treat), summarize, y=mean(y), y0=mean(y0))
+d1.mean
+```
+
+```{r}
+model=lm(y~treat+block, data=d1.mean)
+drop1(model, test="F")
+```
+entspricht Ergebnissen aus Version 2
+
+
+
+### weitere Versuche mit glmmTMB
+
+```{r}
+mod.TMB=glmmTMB(y~treat+block+(1|block_plot), data=d1, REML=TRUE)
+summary(mod.TMB) # random term variance close to zero
+
+car::Anova(mod.TMB, test="Chi")# 0.00005587
+drop1(mod.TMB, test="Chisq")# p = 0.06384 # evtl nah an Version 4, aber nicht gleich
+```
+```{r}
+car::Anova(mod.TMB, test="Chisq")
+```
+
+#### ohne Block
+```{r}
+mod.TMB3=glmmTMB(y~treat+(1|block_plot), data=d1, REML=TRUE)
+car::Anova(mod.TMB3, test="Chi")#  0.0000222
+drop1(mod.TMB3, test="Chisq")# 0.01394
+```
+
+#### block als random
+```{r}
+mod.TMB3=glmmTMB(y~treat+(1|block/treat), data=d1, REML=TRUE)
+summary(mod.TMB3)
+car::Anova(mod.TMB3, test="Chi")#  0.0000222
+drop1(mod.TMB3, test="Chisq")# 0.01394
+```
+gleiche Ergebnisse
+
+#### Gbur
+
+Errorvariance wird auf 0.0084 gesetzt  
+
+```{r}
+
+
+mod.TMB4=glmmTMB(y~treat+block+(1|block_plot), data=d1, REML=TRUE,
+                map=list(betad=factor(NA)), start=list(betad=log(0.0084)))
+summary(mod.TMB4) 
+car::Anova(mod.TMB4, test="Chi")# 
+drop1(mod.TMB4, test="Chisq")
+mod.TMB4.0=glmmTMB(y~block+(1|block_plot), data=d1, REML=TRUE,
+                map=list(betad=factor(NA)), start=list(betad=log(0.0084)))
+summary(mod.TMB4.0) 
+sigma(mod.TMB4)^2
+```
+
+
+Models fitted with ML,  
+mu1 und mu2 als response
+
+```{r}
+d1$y.mu=asin(sqrt(0.1))
+d1$y.mu[d1$treat=="trt"]=asin(sqrt(0.2))
+mod.TMB4.ml=glmmTMB(y.mu~treat+block+(1|block_plot), data=d1, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(0.0084)))
+summary(mod.TMB4.ml)
+sigma(mod.TMB4.ml)^2
+mod.TMB4.0.ml=glmmTMB(y.mu~block+(1|block_plot), data=d1, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(0.0084)))
+summary(mod.TMB4.0.ml)
+```
+
+
+```{r}
+F_value=anova(mod.TMB4.ml, mod.TMB4.0.ml)$Chisq[2] # Chisq 
+F_value #  9.519208
+```
+
+```{r}
+alpha=0.05
+df1=1
+df2=df.residual(mod.TMB4.ml)
+df2
+F_crit <- qf(1-alpha, df1, df2)
+F_crit
+```
+
+```{r}
+ncp=df1*F_value
+ncp
+```
+```{r}
+1 - pf(F_crit, df1, df2, ncp)
+```
+Ergebnisse vom 1.3.2022 für ne & no =3
+
+Version | Package  | power
+----|------|-------
+ 1  |   SAS | 0.5144
+ 1  |    R  | 0.5212   
+ 2  |   SAS | 0.4034 
+ 3  |     R | 0.8438 
+ 3  |   SAS | 0.8444 
+ 4  |     R | 0.1754         
+ 4  |   SAS | 0.1728 
+ 5  |     R | 0.1730 
+ 6  |     R | 0.8958
+ 7  |     R | 0.7620
+ 7  |   SAS | 0.8112
+ 7B |      R | 0.6948
+ 7c |      R | 0.5230
+ 8  |     R | 0.8876
+ 8  |   SAS | 0.8984
+ 8B |     R | 0.8378
+ 8c |     R | 0.7118
+ 9  |     R | 0.4102
+ 9  |   SAS | 0.4034
+Gbur|   R   | 0.813609
+
+
+### Gbur für no und ne
+
+
+```{r}
+ctrl=asin(sqrt(0.1))
+trt=asin(sqrt(0.2))
+
+error.var=0.0084
+alpha=0.05
+
+df1=1 # compare two treatment means
+plot=2 # compare two treatment means
+#create data
+
+no=15 # sample
+ne=5 # block
+
+df=data.frame(block=factor(rep(c(1:ne), each=no*plot)), 
+              ne=rep(c(1:ne), each=no*plot), 
+              plot=factor(rep(c(1:plot), each=no, times=ne)),
+              no=rep(1:no),
+              treat=factor(rep(c("ctrl", "trt"), each=no, times=ne)),
+              y.mu=rep(c(ctrl, trt), each=no, times=ne))
+df$block_plot=factor(paste(df$block, df$plot, sep="."))
+df
+```
+
+
+
+```{r}
+my.res.p=matrix(NA, ncol=no-1, nrow=ne-1)
+my.res.ne=matrix(NA, ncol=no-1, nrow=ne-1)
+my.res.no=matrix(NA, ncol=no-1, nrow=ne-1)
+
+for (j in 2:no){
+  for (i in 2:ne) {
+    df.sub=df[df$ne<=i&df$no<=j,]
+    mod.TMB4.ml=glmmTMB(y.mu~treat+block+(1|block_plot), data=df.sub, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(error.var)))
+    mod.TMB4.0.ml=glmmTMB(y.mu~block+(1|block_plot), data=df.sub, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(error.var)))
+    F_value=anova(mod.TMB4.ml, mod.TMB4.0.ml)$Chisq[2] 
+    df2=df.residual(mod.TMB4.ml)
+    F_crit <- qf(1-alpha, df1, df2)
+    ncp=df1*F_value
+    power=1 - pf(F_crit, df1, df2, ncp)
+    my.res.p[i-1,j-1]<-power
+    my.res.ne[i-1,j-1]<-i
+    my.res.no[i-1,j-1]<-j
+  }
+ 
+  }
+
+my.res.gbur=data.frame(power=as.vector(my.res.p),
+                       ne=as.vector(my.res.ne),
+                       no=as.vector(my.res.no))
+ggplot(data=my.res.gbur, aes(y=power, x=no, col=as.factor(ne)))+
+  geom_point()+
+  geom_line()
+```
+### T1
+
+```{r}
+ctrl=asin(sqrt(0.1))
+trt=asin(sqrt(0.1))
+
+error.var=0.0084
+alpha=0.05
+
+df1=1 # compare two treatment means
+plot=2 # compare two treatment means
+#create data
+
+no=15 # sample
+ne=5 # block
+
+df=data.frame(block=factor(rep(c(1:ne), each=no*plot)), 
+              ne=rep(c(1:ne), each=no*plot), 
+              plot=factor(rep(c(1:plot), each=no, times=ne)),
+              no=rep(1:no),
+              treat=factor(rep(c("ctrl", "trt"), each=no, times=ne)),
+              y.mu=rep(c(ctrl, trt), each=no, times=ne))
+df$block_plot=factor(paste(df$block, df$plot, sep="."))
+df
+```
+
+
+
+```{r}
+my.res.p=matrix(NA, ncol=no-1, nrow=ne-1)
+my.res.ne=matrix(NA, ncol=no-1, nrow=ne-1)
+my.res.no=matrix(NA, ncol=no-1, nrow=ne-1)
+
+for (j in 2:no){
+  for (i in 2:ne) {
+    df.sub=df[df$ne<=i&df$no<=j,]
+    mod.TMB4.ml=glmmTMB(y.mu~treat+block+(1|block_plot), data=df.sub, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(error.var)))
+    mod.TMB4.0.ml=glmmTMB(y.mu~block+(1|block_plot), data=df.sub, REML=FALSE,
+                map=list(betad=factor(NA)), start=list(betad=log(error.var)))
+    F_value=anova(mod.TMB4.ml, mod.TMB4.0.ml)$Chisq[2] 
+    df2=df.residual(mod.TMB4.ml)
+    F_crit <- qf(1-alpha, df1, df2)
+    ncp=df1*F_value
+    power=1 - pf(F_crit, df1, df2, ncp)
+    my.res.p[i-1,j-1]<-power
+    my.res.ne[i-1,j-1]<-i
+    my.res.no[i-1,j-1]<-j
+  }
+   }
+
+my.res.gbur.T1=data.frame(T1=as.vector(my.res.p),
+                       ne=as.vector(my.res.ne),
+                       no=as.vector(my.res.no))
+ggplot(data=my.res.gbur.T1, aes(y=T1, x=no, col=as.factor(ne)))+
+  geom_point()+
+  geom_line()+
+  facet_grid(~ne)+
+  ylim(0.04, 0.06)
+```
+
+
+
+```{r}
+power.comp=read.csv("power.comp_20220307.csv", header=T)
+power.comp$ne=power.comp$ne.ori
+str(power.comp)
+```
+
+
+```{r}
+power.comp[power.comp$no==3&power.comp$ne==3,c(3,5:6)]
+```
+
+
+```{r}
+my.res.gbur$Version="Gbur"
+my.res.gbur$Package="R"
+my.res.gbur$p.LI=NA
+my.res.gbur$p.UI=NA
+my.res.gbur$T1=my.res.gbur.T1$T1
+my.res.gbur$T1.LI=NA
+my.res.gbur$T1.UI=NA
+names(my.res.gbur)
+
+power.comp2=rbind(power.comp[,1:10], my.res.gbur[,c("no" , "ne"  ,  "power" , "T1","Version", "Package", "p.LI", "p.UI"  , "T1.LI",  "T1.UI"     )])
+
+names(power.comp2)
+```
+
+```{r, fig.width=12, fig.height=8}
+ggplot(data=power.comp2, aes(y=power*100, x=no, col=Package))+
+  geom_hline(yintercept=80, linetype="dashed", col="gray50")+
+  geom_errorbar(aes(ymin=p.LI*100, ymax=p.UI*100), width=0.3)+
+  geom_point()+
+  geom_line()+
+  facet_grid(ne~Version)+
+  labs(x=expression(italic("n"[italic("o")])), y="Power")+
+  theme(legend.position = "bottom")
+ggsave("power_xx_ne_20220307.pdf", width=12, height=8)
+```
+
+
+```{r, fig.width=8, fig.height=4}
+ggplot(data=power.comp2[power.comp2$Version %in%c("1","2", "4","9", "Gbur"),], 
+       aes(y=power*100, x=no, col=Version, shape=Package))+
+  geom_hline(yintercept=80, linetype="dashed", col="gray50")+
+  geom_errorbar(aes(ymin=p.LI*100, ymax=p.UI*100), width=0.3)+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~ne,  labeller=label_parsed, ncol=4)+
+  labs(x=expression(italic("n"[italic("o")])), y="power")+
+  theme(legend.position = "bottom")
+```
+
+
+```{r, fig.width=8, fig.height=4}
+ggplot(data=power.comp2[power.comp2$Version %in%c("5","6", "7","Gbur"),], aes(y=power*100, x=no, col=Version, shape=Package))+
+  geom_hline(yintercept=80, linetype="dashed", col="gray50")+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~ne,  labeller=label_parsed, ncol=4)+
+  labs(x=expression(italic("n"[italic("o")])), y="power")+
+  theme(legend.position = "bottom")
+```
+
+```{r}
+no3ne3=power.comp2[power.comp2$no==3&power.comp2$ne==3,]
+no3ne3[c(11,13,14,10,15,12,16,1,2,3,17,4 ,18,19,9,20,6,7,8,5),]
+```
+```{r}
+no3ne3[,]
+```
+
+```{r}
+install.packages("remotes")
+remotes::install_github("jprice80/glmmTMBbasicdfs")
+```
+
+
+
+
+```{r}
+mod.TMB1=glmmTMB(y~treat+block+(1|block_plot), data=d1, REML=T)
+anova(mod.TMB1, method = "containment", type = 3, test.statistic="F", contr_sum = TRUE)
+
+anova(mod.TMB1, method = "nlme", type = 3,test.statistic="F")
+
+anova(mod.TMB1, method = "inner-outer", type = 3,test.statistic="F")
+```
+
