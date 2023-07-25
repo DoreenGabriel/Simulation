@@ -1,0 +1,436 @@
+---
+title: "Simulations for sample size"
+author: "Doreen Gabriel"
+date: "`r format(Sys.time(), '%a %d %B, %Y')`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment="")
+```
+
+
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)# graphics
+library(MASS)# glm.nb
+library(plyr)
+library(dplyr)# calculations of group means and so on
+library(emmeans)# CIs
+library(reshape2)
+library(ggpubr)
+library(ggpmisc)
+```
+
+
+
+### Function
+
+to obtain SED, model estimates, LSD, Confidence interval (half width)
+
+
+```{r}
+my_CI_function <- function(control, treatment, sd, sample_size, sim) 
+  {
+  SED<-c()
+  MAE<-c()
+  RMSE<-c()
+  R2<-c()
+  dAIC<-c()
+  coef<-c()
+  p <- c()
+  p.T1<-c()
+  dAIC.T1<-c()
+  LSD<-c()
+  HW <- c()
+  
+  for (i in 1:sim) {
+    df=data.frame(y=c(rnorm(sample_size, control, sd), rnorm(sample_size, treatment, sd)), 
+                  Treat=factor(rep(c("control", "treatment"), each=sample_size)))
+    df$y0=c(df$y[df$Treat=="control"], rnorm(sample_size, control, sd))
+    model=lm(y~Treat, data=df)
+    model.0=lm(y~1, data=df)
+    model.T1=lm(y0~Treat, data=df)
+    model.0.T1=lm(y0~1, data=df)
+    SED[i] <- summary(model)$coef[4]
+    MAE[i] <- mean(abs(fitted(model)-df$y))
+    RMSE[i] <- sqrt(mean((df$y-fitted(model))^2))
+    R2[i]<-summary(model)$r.sq
+    dAIC[i]<-AIC(model)-AIC(model.0)
+    coef[i] <- coef(model)[2]
+    p[i] <- drop1(model, test="F")$Pr[2] 
+    p.T1[i] <- drop1(model.T1, test="F")$Pr[2] 
+    dAIC.T1[i]<-AIC(model.T1)-AIC(model.0.T1)
+    LSD[i]=data.frame(pairs(emmeans(model, ~Treat)))[,3]
+    CI.d=data.frame(confint(model))[2,] # confidence interval for difference
+    HW[i] <- (CI.d$X97.5..-CI.d$X2.5..)/2 # HW of confidence interval of the difference
+  }
+  return(dat=data.frame(SED=SED, MAE=MAE, RMSE=RMSE, R2=R2, dAIC=dAIC, coef=coef, p=p, p.T1=p.T1, dAIC.T1=dAIC.T1, LSD=LSD, HW=HW, control=control, treatment=treatment, sd=sd, sample_size=sample_size, sim=sim, row.names = NULL))
+}
+my_CI_function(control=10, treatment=11, sd=1, sim=100, sample_size=10)
+```
+
+
+
+
+Example Milk yield
+```{r}
+dat.temp <- c()
+dat<-c()
+sample_size_to_try <- c(6:16)*5
+set.seed(12345)
+for (i in 1:length(sample_size_to_try)) {
+  dat.temp <- my_CI_function(control=31.6, treatment=31.6+5, sd=sqrt(88.4), sim=5000, sample_size=sample_size_to_try[i])
+  dat=rbind(dat, dat.temp)
+}
+
+dat$sample_size.f=factor(dat$sample_size)
+#dat=read.csv("simulation_milkyield_20220201.csv", header=T)
+#write.csv(dat, "simulation_milkyield_20220117.csv", row.names=F)
+```
+
+
+
+```{r}
+effect=5
+dat_sum <- ddply(dat, .(sample_size.f, sample_size), summarize, sim=length(p), 
+                 power=sum(p<0.05)/sim,  
+                 dAIC0=sum(dAIC<=0)/sim, dAIC2=sum(dAIC<=-2)/sim, dAIC4=sum(dAIC<=-4)/sim, 
+                 T1=sum(p.T1<0.05)/sim,
+                 dAIC0.T1=sum(dAIC.T1<=0)/sim, dAIC2.T1=sum(dAIC.T1<=-2)/sim, dAIC4.T1=sum(dAIC.T1<=-4)/sim, 
+                 SED.50 = median(SED),SED.20=quantile(SED, p=0.2), SED.80=quantile(SED, p=0.8),
+                 SED.mean = mean(SED),
+                 SED.2=sqrt(mean((effect-coef)^2)),
+                 MAE.50 = median(MAE), 
+                 RMSE.50 = median(RMSE), R2.20=quantile(R2, p=0.2),
+                 R2.50=quantile(R2, p=0.5), R2.80=quantile(R2, p=0.8), 
+                 coef.50 = median(coef), coef.20=quantile(coef, p=0.2), coef.80=quantile(coef, p=0.8),
+                 HW.50 = median(HW), HW.20 = quantile(HW, p=0.2), HW.80 = quantile(HW, p=0.8))
+dat_sum
+```
+```{r}
+summary(dat_sum)
+```
+
+
+dAIC2= %cases with dAIC<2 (here -2)
+q80.dAIC: 80th percentile dAIC
+
+#### Plot results
+just take a few Sample sizes, eg. 
+```{r}
+dat2=dat[dat$sample_size%in%c(30, 45, 60, 75),]#35, 50, 65, 80
+dat_sum2=dat_sum[dat_sum$sample_size%in%c(30, 45, 60, 75),]
+```
+
+
+
+##### Coefficients
+```{r, fig.width=6, fig.height=4.5}
+y1=c((1:4)/100)+0.27
+p1=ggplot(data=dat2, aes(x=coef, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  geom_point(data=dat_sum2, aes(x=coef.50, y=y1))+
+  geom_errorbarh(data=dat_sum2, aes(x=NULL, xmax = coef.80, xmin = coef.20, y=y1, height=0.01))+
+  labs(y="density", x="estimated difference", col="sample size", fill="sample size")+
+  theme(legend.position = "bottom")
+p1
+```
+##### abs(effect-coefficients)
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat2, aes(x=abs(5-coef), col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+
+
+##### SED
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat2, aes(x=SED, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+y2=4.75
+p2=ggplot(data=dat2, aes(x=SED, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  geom_point(data=dat_sum2, aes(x=SED.50, y=y2))+
+  geom_errorbarh(data=dat_sum2, aes(x=NULL, xmax = SED.80, xmin = SED.20, y=y2, height=0.1))+
+  labs(y="density", x="SED", col="sample size", fill="sample size")+
+  theme(legend.position = "bottom")
+p2
+```
+
+##### HW of confidence interval
+```{r, fig.width=6, fig.height=4.5}
+y3=3.5
+p3=ggplot(data=dat2, aes(x=HW, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  geom_point(data=dat_sum2, aes(x=HW.50, y=y3))+
+  geom_errorbarh(data=dat_sum2, aes(x=NULL, xmax = HW.80, xmin = HW.20, y=y3, height=0.1))+
+  labs(y="density", x="HW of confidence interval", col="sample size", fill="sample size")+
+  theme(legend.position = "bottom")
+p3
+```
+
+##### R2
+```{r, fig.width=6, fig.height=4.5}
+y7=c((1:4)/3)+11.5
+p7=ggplot(data=dat2, aes(x=R2, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  geom_point(data=dat_sum2, aes(x=R2.50, y=y7))+
+  geom_errorbarh(data=dat_sum2, aes(x=NULL, xmax = R2.80, xmin = R2.20, y=y7, height=0.3))+
+  labs(y="density", x="R²", col="sample size", fill="sample size")+
+  theme(legend.position = "bottom")
+p7
+```
+
+
+
+```{r, fig.width=6, fig.height=4.5}
+p4=ggplot(data=dat_sum, aes(y=SED.2, x=SED.mean))+
+  geom_point()+
+  geom_smooth(method=lm, se=F)+
+  stat_poly_eq(formula =  y ~ x,
+               aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), 
+                parse = TRUE) +
+  geom_abline(intercept=0, slope=1)+
+  labs(y="SED (root mean squared deviation of \n estimated vs. true difference)", x="Mean of SED \n(from model summary)")
+p4
+```
+
+
+```{r, fig.width=6, fig.height=4.5}
+p41=ggplot(data=dat_sum, aes(y=SED.2, x=SED.50))+
+  geom_point()+
+  geom_smooth(method=lm, se=F)+
+  stat_poly_eq(formula =  y ~ x,
+               aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~")), 
+                parse = TRUE) +
+  geom_abline(intercept=0, slope=1)+
+  labs(y="SED (root mean squared deviation    \n of estimated vs. true difference)", x="Median of estimated SED")
+p41
+```
+
+
+```{r, fig.width=6, fig.height=4.5}
+p5=ggplot(data=dat2, aes(y=HW, x=SED, col=sample_size.f))+
+  geom_point()+
+  geom_smooth(method=lm, se=F)+
+  stat_poly_eq(formula = y ~ x, 
+                aes(label = paste(..eq.label..)), 
+                parse = TRUE)  +
+  labs(x="SED", y="HW of confidence interval", col="sample size")+
+  theme(legend.position = "bottom")
+p5
+```
+
+
+```{r}
+ggplot(data=dat_sum, aes(y=power, x=sample_size))+
+  geom_point()+
+  geom_line()+
+  labs(x="sample size", y="power")+
+  theme(legend.position = "bottom")
+```
+
+# compare different power calculations
+```{r}
+dat_sum.p=reshape2::melt(dat_sum[,c(2:7)], id.vars=c("sample_size", "sim"),variable.name="method",
+    value.name="power")
+dat_sum.p
+dat_sum.p$LI=dat_sum.p$power-qnorm(0.975)*sqrt((1/dat_sum.p$sim)*dat_sum.p$power*(1-dat_sum.p$power))
+dat_sum.p$UI=dat_sum.p$power+qnorm(0.975)*sqrt((1/dat_sum.p$sim)*dat_sum.p$power*(1-dat_sum.p$power))
+```
+
+
+```{r}
+dat_sum.t1=reshape2::melt(dat_sum[,c(2:3,8:11)], id.vars=c("sample_size", "sim"),variable.name="method",
+    value.name="T1")
+dat_sum.t1
+dat_sum.t1$LI=dat_sum.t1$T1-qnorm(0.975)*sqrt((1/dat_sum.t1$sim)*dat_sum.t1$T1*(1-dat_sum.t1$T1))
+dat_sum.t1$UI=dat_sum.t1$T1+qnorm(0.975)*sqrt((1/dat_sum.t1$sim)*dat_sum.t1$T1*(1-dat_sum.t1$T1))
+```
+
+
+```{r, fig.width=6, fig.height=4.5}
+p9a=ggplot(data=dat_sum.p[dat_sum.p$method=="power",], aes(y=power*100, x=sample_size))+
+  geom_hline(yintercept=85, linetype="dashed", col="gray50")+
+  geom_point()+
+  geom_errorbar(aes(ymin=LI*100, ymax=UI*100), width=0.7)+
+  geom_line()+
+  labs(x="sample size", y="power")+
+  theme(legend.position = "bottom")+
+  ylim(20,100)
+p9a
+
+p9c=ggplot(data=dat_sum.p[!dat_sum.p$method=="power",], aes(y=power*100, x=sample_size, col=method))+
+  geom_hline(yintercept=85, linetype="dashed", col="gray50")+
+  geom_point()+
+  geom_errorbar(aes(ymin=LI*100, ymax=UI*100), width=0.7)+
+  geom_line()+
+  labs(x="sample size", y=expression(paste("proportion of simulations under ", italic("H"["a"]))))+
+  theme(legend.position = "bottom")+
+  ylim(20,100)+ scale_color_discrete(name = "critical threshold", labels = c("dAIC < 0", "dAIC < -2", "dAIC < -4"))
+p9c
+
+```
+```{r, fig.width=6, fig.height=4.5}
+p10a=ggplot(data=dat_sum.t1[dat_sum.t1$method=="T1",], aes(y=T1*100, x=sample_size))+
+  geom_hline(yintercept=5, linetype="dashed", col="gray50")+
+  geom_point()+
+  geom_errorbar(aes(ymin=LI*100, ymax=UI*100), width=0.7)+
+  geom_line()+
+  labs(x="sample size", y="Type I error rate")+
+  theme(legend.position ="bottom")+
+  ylim(0,20)
+p10a
+
+p10c=ggplot(data=dat_sum.t1[!dat_sum.t1$method=="T1",], aes(y=T1*100, x=sample_size, col=method))+
+  geom_hline(yintercept=5, linetype="dashed", col="gray50")+
+  geom_point()+
+  geom_errorbar(aes(ymin=LI*100, ymax=UI*100), width=0.7)+
+  geom_line()+
+  labs(x="sample size", y=expression(paste("proportion of simulations under ", italic("H"["0"]))))+
+  theme(legend.position ="bottom")+
+  ylim(0,20)+scale_color_discrete(name = "critical threshold", labels = c("dAIC < 0", "dAIC < -2", "dAIC < -4"))
+p10c
+```
+
+
+
+```{r, fig.height=13, fig.width=6}
+ggarrange(                                                # First row with scatter plot
+          ggarrange(p1, p7, p2, p3,  
+          labels = c("a)", "b)", "c)", "d)"), common.legend = TRUE, legend = "bottom"), # Second row with box and dot plots
+          p41, nrow=2,
+          labels = "e)" ,  label.x = 0,  label.y = 0.075,      
+          heights = c(4.5, 2)) 
+ggsave("Example_milk_yield_01_20220131.pdf", width=8, height=18)
+ggsave("Example_milk_yield_01_20220131.tiff", width=8, height=12, dpi=300, compression="lzw")
+```
+
+
+```{r, fig.width=6, fig.height=6}
+ggarrange(p9a, p10a, p9c, p10c,
+          labels = c("a)", "b)", "c)", "d)"), common.legend = TRUE, legend = "bottom")
+ggsave("Example_milk_yield_02_20220201.pdf", width=8, height=8)
+ggsave("Example_milk_yield_02_20220201.tiff", width=8, height=8, dpi=300, compression="lzw")
+```
+
+Type I error rate does not change with sample size, but reflects the results from power curve, i.e. p<0.05  and dAIC< -2 have an average Type I error rate of `r round(mean(dat_sum$T1)*100,2)` and `r round(mean(dat_sum$dAIC2.T1)*100,2)`  , while dAIC< -4 results in low (`r round(mean(dat_sum$dAIC4.T1)*100,2)`) and dAIC<0 method results in high (`r round(mean(dat_sum$dAIC0.T1)*100,2)`) Type I error rate, respectively.
+
+
+
+```{r}
+ggplot(data=dat2, aes(y=-dAIC, x=p))+
+  geom_point()+
+  geom_vline(xintercept = 0.05, linetype="dashed")+
+ # geom_smooth(method=lm, se=F)+
+  facet_wrap(~sample_size.f)+
+  ylim(c(-2,5))+
+  xlim(c(0,0.3))
+ggsave("Example_milk_yield_04_20220201.pdf", width=8, height=4.25)
+```
+
+
+```{r}
+ggplot(data=dat_sum, aes(x=SED.50, y=HW.50))+
+  geom_point()+
+  geom_smooth(method=lm, se=F)+
+  stat_poly_eq(formula = y ~ x, 
+                aes(label = paste(..eq.label..)), 
+                parse = TRUE)
+```
+
+
+80th percentile? as indicator for SED at given sample size?
+
+##### MAE
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat, aes(x=MAE, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+##### RMSE
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat, aes(x=RMSE, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+
+##### R2
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat2, aes(x=R2, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+##### dAIC
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat, aes(x=dAIC, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+ 
+
+
+
+##### LSD
+
+
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat, aes(x=LSD, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+##### CI/2
+```{r, fig.width=6, fig.height=4.5}
+ggplot(data=dat, aes(x=HW, col=sample_size.f, fill=sample_size.f))+
+  geom_density(alpha=0.2)+
+  theme(legend.position = "bottom")
+```
+
+
+
+```{r}
+
+sample_size=10
+control=31.6
+treatment=31.6+5
+sd=sqrt(88.4)
+set.seed(12345)
+df=data.frame(y=c(rnorm(sample_size, control, sd), rnorm(sample_size, treatment, sd)), 
+                  Treat=factor(rep(c("control", "treatment"), each=sample_size)))
+df$y0=c(df$y[df$Treat=="control"], rnorm(sample_size, control, sd))
+    
+model=lm(y~Treat, data=df)
+model.0=lm(y~1, data=df)
+model.T1=lm(y0~Treat, data=df)
+model.0.T1=lm(y0~1, data=df)
+summary(model)$coef[4]   # SED
+mean(abs(fitted(model)-df$y)) #  MAE
+sqrt(mean((df$y-fitted(model))^2))#RMSE[i] 
+summary(model)$r.sq# R2[i]<-
+AIC(model)-AIC(model.0)# dAIC[i]<-
+coef(model)[2] # coef[i] <- 
+drop1(model, test="F")$Pr[2] # p[i] <-
+drop1(model.T1, test="F")$Pr[2]# p.T1[i] 
+AIC(model.T1)-AIC(model.0.T1)# dAIC.T1[i]<-
+data.frame(pairs(emmeans(model, ~Treat)))[,3] #LSD[i]=
+summary(emmeans(model, ~Treat))[1,]# CI.lm=keep it only for first level of factor
+(CI.lm$upper.CL-CI.lm$lower.CL)/2 # HW[i] <- EHW of confidence interval
+CI.d=data.frame(confint(model.lm))[2,] # confidence interval for difference
+(CI.d$X97.5..-CI.d$X2.5..)/2 # HW of CO of difference
+```
+```{r}
+AIC(model)
+AIC(model, k=2)
+AIC(model.0)
+```
+
